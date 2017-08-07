@@ -5,6 +5,9 @@ import json
 from lxml import etree
 import re
 import datetime
+import threading
+import hashlib
+import time
 
 
 def write_content(content, file_name='default.content'):
@@ -143,15 +146,121 @@ def get_page_json(relic_id, date_str):
         json_root = json.loads(req.content)
         print 'Total cnt [%d]' % len(json_root['items'])
         for item in json_root['items']:
-            if item.has_key('url'):
-                full_url = item['url']
-            else:
+            if item.has_key('originalUrl'):
                 full_url = 'http://yourshot.nationalgeographic.com' + item['originalUrl']
+            else:
+                full_url = item['url']
             store_info(full_url)
-            #print 'http://yourshot.nationalgeographic.com' + item['originalUrl']
         pass
+    pass
+
+
+def store_img(name, content):
+    folder = 'img'
+    if not os.path.exists(folder):
+        os.mkdir(folder)
+    full_path = os.path.join(folder, name)
+    if os.path.exists(full_path):
+        print 'Warning: alread exist [%s]' % full_path
+    with open(full_path, 'wb+') as fd:
+        fd.write(content)
+
+
+def thread_get_img(url_list):
+    global gAllQuit
+    global gRunningThreadCnt
+    gRunningThreadCnt += 1
+    succeed_list = list()
+    failed_list = list()
+    for url in url_list:
+        if gAllQuit:
+            break
+        print 'Parse [%s]' % url
+        req = requests.request('GET', url, timeout=20)
+        if 200 == req.status_code:
+            m = hashlib.md5()
+            m.update(url)
+            file_name = m.hexdigest() + '.jpg'
+            # file_name = os.path.basename(url)
+            store_img(file_name, req.content)
+            succeed_list.append(url)
+        else:
+            print 'Failed to parse url [%s]' % url
+            failed_list.append(url)
+    update_task((succeed_list, failed_list))
+    gRunningThreadCnt -= 1
+    return
+
+gAllQuit = False
+gRunningThreadCnt = 0
+gSucceedUrlList = list()
+
+
+def update_task(task_info_tup):
+    (succeed_list, failed_list) = task_info_tup
+    gSucceedUrlList.extend(succeed_list)
+    pass
+
+
+def update_url_config():
+    print 'Update txt'
+    pass
+
+
+def split_task(task_list):
+    global gAllQuit
+    global gRunningThreadCnt
+
+    set_max_thread = 20
+    child_process_list = list()
+
+    filper = 1
+    if len(task_list) >= set_max_thread:
+        filper = len(task_list) // set_max_thread
+        idx = 0
+        while (idx+filper-1) < len(task_list):
+            try:
+                pro = threading.Thread(target=thread_get_img, args=(task_list[idx:idx+filper-1], ))
+                pro.setDaemon(False)
+                pro.start()
+                child_process_list.append(pro)
+                idx += filper
+            except :
+                print ('something err when start thread')
+                continue
+    tail = len(task_list) % filper
+    if tail:
+        pro = threading.Thread(target=thread_get_img, args=(task_list[len(task_list)-tail:len(task_list)-1], ))
+        pro.setDaemon(False)
+        pro.start()
+        child_process_list.append (pro)
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            gAllQuit = True
+            print 'KeyBoard Except quit now'
+            while gRunningThreadCnt > 0:
+                time.sleep(1)
+            update_url_config()
+            print 'Quit!'
+            return
 
     pass
+
+
+def start_get_all_img():
+    url_list = list()
+    with open(gInfoStoreFile, 'r') as fd:
+        while True:
+            line = fd.readline()
+            if line:
+                url_list.append(line)
+            else:
+                break
+    split_task(url_list)
+    pass
+
 
 def search_new_relic_id_from_content(content):
     # loader_config={xpid:"Uw4AWVVACgsJVVlWAwM="}
@@ -167,15 +276,21 @@ def search_new_relic_id_from_content(content):
 
 
 if __name__ == '__main__':
-    start_date = datetime.date(year=2016, month=1, day=1)
-    end_date = datetime.date(year=2017, month=7, day=1)
-    cur_date = start_date
-    while cur_date < end_date:
-        date_str = '%s-%2d' % (cur_date.year, cur_date.month)
+    start_get_all_img()
+    exit()
+    year = 2016
+    month = 1
+    while True :
+        date_str = '%d-%02d' % (year, month)
         print date_str
-        
+        get_page_json('', date_str)
+        month += 1
+        if month > 12:
+            month = 1
+            year += 1
+        if year >= 2017 and month >= 7:
+            break
 
-    get_page_json('', '')
     exit()
     with open('tmp/photo-of-day-main.html', 'r') as fd:
         buf = fd.read()
