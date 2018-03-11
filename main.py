@@ -8,6 +8,247 @@ import datetime
 import threading
 import hashlib
 import time
+from common_lib import MyArgParse, LogHandle, ThreadHandler
+from sqlite_util import DBRowHuaBan, DBHandler, DBRow, DBItem
+
+gstLogHandle = LogHandle('geo.log')
+
+
+class DBRowGeo(DBRow):
+    def do_init(self):
+        self.item_list.append(DBItem('pageUrl', 'CHAR'))
+        self.item_list.append(DBItem('title', 'CHAR'))
+        self.item_list.append(DBItem('profileUrl', 'CHAR'))
+        self.item_list.append(DBItem('altText', 'CHAR'))
+        self.item_list.append(DBItem('url', 'CHAR'))
+        self.item_list.append(DBItem('url_hash', 'CHAR', is_primary=True))
+        self.item_list.append(DBItem('is_done', 'INT'))
+        pass
+
+    def generate_select_cmd_str(self, table_name):
+        ret_str = ' select '
+        for idx, item in enumerate(self.item_list):
+            ret_str += table_name + '.' + item.name
+            if idx != len(self.item_list)-1:
+                ret_str += ' , '
+        ret_str += ' from %s where %s.%s == 0' % (table_name, table_name, self.item_list[6].name)
+        return ret_str
+        pass
+
+
+class GEOPicInfo:
+    def __init__(self):
+        self.log = gstLogHandle.log
+
+        self.m_pageUrl = ''
+        self.m_title = ''
+        self.m_profileUrl = ''
+        self.m_altText = ''
+        self.url = ''
+        pass
+
+    def load_from_dict(self, dict_info):
+        if dict_info.has_key('originalUrl'):
+            self.url = 'http://yourshot.nationalgeographic.com' + dict_info['originalUrl']
+        elif dict_info.has_key('url'):
+            self.url = dict_info['url']
+        else:
+            self.log('Failed to find pic url')
+            return False
+        try:
+            if dict_info.has_key('pageUrl'):
+                self.m_pageUrl = dict_info['pageUrl']
+            if dict_info.has_key('title'):
+                self.m_title = dict_info['title']
+            if dict_info.has_key('profileUrl'):
+                self.m_profileUrl = dict_info['profileUrl']
+            if dict_info.has_key('altText'):
+                self.m_altText = dict_info['altText']
+        except KeyError:
+            self.log('Maybe missing some pic info')
+            pass
+        return True
+
+        pass
+
+
+class GETYourShotDownloadThreadMng(ThreadHandler):
+    def do_init(self):
+        self.m_set_work_thread_cnt = 10
+        self.log = gstLogHandle.log
+
+
+        self.m_succeed_done_task_list = list()
+        self.m_falied_done_task_list = list()
+        pass
+
+    def work_thread(self):
+        while True:
+            if self.m_quit_flag:
+                break
+            row = self.get_one_task()
+            if row is None:
+                if self.m_load_task_done:
+                    break
+                time.sleep(3)
+                continue
+            # row = DBRowGeo()
+            url = row.get_column_value('url')
+            self.log(url)
+            try:
+                req = requests.request('GET', url, timeout=40)
+            except requests.ConnectionError:
+                self.log('Time out download pic')
+            if 200 == req.status_code:
+                m = hashlib.md5()
+                m.update(url)
+                file_name = m.hexdigest() + '.jpg'
+                # file_name = os.path.basename(url)
+                store_img(file_name, req.content)
+                self.lock.acquire()
+                self.m_succeed_done_task_list.append(row)
+                self.lock.release()
+                self.log('Done [%s]' % url)
+            else:
+                print 'Failed to parse url [%s]' % url
+        pass
+
+    def do_start(self):
+        self.start_one_thread(self.load_task_thread)
+        pass
+
+    def load_task_thread(self):
+        db_handler = DBHandler(DBRowGeo)
+        db_handler.load('geo.db')
+        db_handler.add_table('yourshot')
+        while True:
+            if self.m_quit_flag:
+                break
+            if len(self.m_task_list) >= 1:
+                self.log('Task list len [%d]' % len(self.m_task_list))
+                time.sleep(3)
+                continue
+            rows = db_handler.get_row(200)
+            if not len(rows):
+                break
+
+            self.add_tasks(rows)
+            while True:
+                if len(self.m_succeed_done_task_list):
+                    row = self.m_succeed_done_task_list.pop()
+                    row.set_column_value('is_done', 1)
+                    db_handler.update_row(row)
+                else:
+                    break
+
+        self.m_load_task_done = True
+        self.log('Load task Done')
+        while True:
+            if len(self.m_succeed_done_task_list):
+                row = self.m_succeed_done_task_list.pop()
+                row.set_column_value('is_done', 1)
+                db_handler.update_row(row)
+            elif self.m_quit_flag:
+                break
+            time.sleep(3)
+        pass
+
+
+class GEOYourShotScrap:
+    def __init__(self):
+        self.db_handler = DBHandler(DBRowGeo)
+        self.db_handler.load('geo.db')
+        self.db_handler.add_table('yourshot')
+
+        self.log = gstLogHandle.log
+        pass
+
+    def do_init(self):
+        pass
+
+    def store_urls(self, pic_info_dict):
+        pic_info = GEOPicInfo()
+        if not pic_info.load_from_dict(pic_info_dict):
+            return False
+        db_row = DBRowGeo()
+
+        # self.item_list.append(DBItem('pageUrl', 'CHAR'))
+        # db_row.item_list[0].value = pic_info.m_pageUrl
+        # self.item_list.append(DBItem('title', 'CHAR'))
+        # db_row.item_list[1].value = pic_info.m_title
+        # self.item_list.append(DBItem('profileUrl', 'CHAR'))
+        # db_row.item_list[2].value = pic_info.m_profileUrl
+        # self.item_list.append(DBItem('altText', 'CHAR'))
+        # db_row.item_list[3].value = pic_info.m_altText
+        # self.item_list.append(DBItem('url', 'CHAR'))
+        # db_row.item_list[4].value = pic_info.url
+        # self.item_list.append(DBItem('url_hash', 'INT', is_primary=True))
+        # m = hashlib.md5()
+        # m.update(pic_info.url)
+        # db_row.item_list[5].value = m.hexdigest()
+        # self.item_list.append(DBItem('is_done', 'INT'))
+        # db_row.item_list[6].value = 0
+        m = hashlib.md5()
+        m.update(pic_info.url)
+        db_row.load((pic_info.m_pageUrl, pic_info.m_title, pic_info.m_profileUrl, pic_info.m_altText, pic_info.url, m.hexdigest(), 0))
+
+        self.db_handler.insert_row(db_row)
+        pass
+
+    def parse_urls(self, date_str):
+        url = 'http://www.nationalgeographic.com/photography/photo-of-the-day/_jcr_content/.gallery.%s.json' % date_str
+        head = {'Host': 'www.nationalgeographic.com',
+                'Usr-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.12; rv:54.0) Gecko/20100101 Firefox/54.0',
+                'Accept': 'application/json, text/javascript, */*; q=0.01',
+                'Accept-Language': 'en-US,en;q=0.5',
+                'Accept-Encoding': 'gzip, deflate',
+                'X-NewRelic-ID': 'Uw4AWVVACgsJVVlWAwM=',
+                'X-Requested-With': 'XMLHttpRequest',
+                'Origin': 'http://www.nationalgeographic.com',
+                'DNT': '1',
+                'Connection': 'keep-alive',
+                'Cache-Control': 'Cache-Control'}
+        req = requests.request('GET', url, headers=head)
+        print req.status_code
+        write_content(req.content, 'page.json')
+        if 200 == req.status_code:
+            json_root = json.loads(req.content)
+            print 'Total cnt [%d]' % len(json_root['items'])
+            for item in json_root['items']:
+                self.store_urls(item)
+            pass
+        pass
+        pass
+
+    def parse_all(self):
+        year = 2016
+        month = 1
+        cur_date = datetime.datetime.now()
+        while True:
+            date_str = '%d-%02d' % (year, month)
+            self.log('Start to get %s' % date_str)
+            self.parse_urls(date_str)
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+            if year >= cur_date.year and month > cur_date.month:
+                break
+        self.log('All Done')
+        pass
+
+    def store_pic_file(self):
+        pass
+
+    def do_download(self, url):
+        pass
+
+    def do_get_pics(self):
+        download_handler = GETYourShotDownloadThreadMng()
+        download_handler.start()
+        pass
+
+
 
 
 def write_content(content, file_name='default.content'):
@@ -91,7 +332,6 @@ def try_get_json_pre():
 
 def try_get_json():
     url = 'https://relay.nationalgeographic.com/proxy/distribution/feed/v1?format=jsonapi&content_type=featured_image&fields=image,uri&collection=fd5444cc-4777-4438-b9d4-5085c0564b44&publication_datetime__from=2009-01-01T18:30:02Z&page=1&limit=48'
-    url = 'https://relay.nationalgeographic.com/proxy/distribution/feed/v1?format=jsonapi&content_type=featured_image&fields=image,uri&collection=fd5444cc-4777-4438-b9d4-5085c0564b44&publication_datetime__from=2009-01-01T18:30:02Z&page=2&limit=48'
     head = {'Host':'relay.nationalgeographic.com',
             'Usr-Agent':'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.12; rv:54.0) Gecko/20100101 Firefox/54.0',
             'Accept':'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -103,6 +343,7 @@ def try_get_json():
             'DNT':'1',
             'Connection':'keep-alive',
             'Cache-Control':'Cache-Control'}
+    url = 'https://relay.nationalgeographic.com/proxy/distribution/feed/v1?format=jsonapi&content_type=featured_image&fields=image,uri&collection=fd5444cc-4777-4438-b9d4-5085c0564b44&publication_datetime__from=2009-01-01T18:30:02Z&page=2&limit=48'
     req = requests.request('GET', url, headers=head)
     print req.status_code
     write_content(req.content, 'https.json')
@@ -274,8 +515,50 @@ def search_new_relic_id_from_content(content):
     return None
     pass
 
+def init_arg_handler():
+    arg_parse = MyArgParse()
+    arg_parse.add_option('-parse', 0, 'do parse')
+    arg_parse.add_option('-download', [0], 'specific dir to scan')
+    arg_parse.add_option('-d', 1, 'set store folder')
+    arg_parse.add_option('-time', 1, 'set parse time 2016-01')
+    arg_parse.add_option('-h', 0, 'print default scan folder and des folder')
+    return arg_parse
+
+
+def test_2():
+    your_shot_handler = GEOYourShotScrap()
+    #your_shot_handler.parse_all()
+    your_shot_handler.do_get_pics()
 
 if __name__ == '__main__':
+    test_2()
+    exit(0)
+    arg_handler = init_arg_handler()
+    arg_handler.parse(sys.argv)
+    if arg_handler.check_option('-h'):
+        print arg_handler
+        exit(0)
+    if arg_handler.check_option('-parse'):
+        if arg_handler.check_option('-time'):
+            date_str = arg_handler.get_option_args('-time')[0]
+            get_page_json('', date_str)
+        else:
+            year = 2016
+            month = 1
+            cur_date = datetime.datetime.now()
+            while True:
+                date_str = '%d-%02d' % (year, month)
+                print date_str
+                get_page_json('', date_str)
+                month += 1
+                if month > 12:
+                    month = 1
+                    year += 1
+                if year >= cur_date.year and month > cur_date.month:
+                    break
+    elif arg_handler.check_option('-download'):
+        start_get_all_img()
+    exit(0)
     start_get_all_img()
     exit()
     year = 2016
