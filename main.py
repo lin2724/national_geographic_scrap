@@ -531,48 +531,16 @@ def test_2():
     your_shot_handler.do_get_pics()
 
 if __name__ == '__main__':
-    test_2()
-    exit(0)
+    your_shot_handler = GEOYourShotScrap()
     arg_handler = init_arg_handler()
     arg_handler.parse(sys.argv)
     if arg_handler.check_option('-h'):
         print arg_handler
         exit(0)
     if arg_handler.check_option('-parse'):
-        if arg_handler.check_option('-time'):
-            date_str = arg_handler.get_option_args('-time')[0]
-            get_page_json('', date_str)
-        else:
-            year = 2016
-            month = 1
-            cur_date = datetime.datetime.now()
-            while True:
-                date_str = '%d-%02d' % (year, month)
-                print date_str
-                get_page_json('', date_str)
-                month += 1
-                if month > 12:
-                    month = 1
-                    year += 1
-                if year >= cur_date.year and month > cur_date.month:
-                    break
+        your_shot_handler.parse_all()
     elif arg_handler.check_option('-download'):
-        start_get_all_img()
-    exit(0)
-    start_get_all_img()
-    exit()
-    year = 2016
-    month = 1
-    while True :
-        date_str = '%d-%02d' % (year, month)
-        print date_str
-        get_page_json('', date_str)
-        month += 1
-        if month > 12:
-            month = 1
-            year += 1
-        if year >= 2017 and month >= 7:
-            break
+        your_shot_handler.do_get_pics()
 
     exit()
     with open('tmp/photo-of-day-main.html', 'r') as fd:
