@@ -246,6 +246,11 @@ class GEOYourShotScrap:
     def do_get_pics(self):
         download_handler = GETYourShotDownloadThreadMng()
         download_handler.start()
+        while True:
+            time.sleep(10)
+            if download_handler.m_quit_flag:
+                sef.log('Main All quit')
+                break
         pass
 
 
