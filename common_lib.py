@@ -90,7 +90,7 @@ class ThreadHandler:
 
     def start_one_thread(self, func):
         pro = threading.Thread(target=self._work_thread, args=(func,))
-        pro.setDaemon(False)
+        pro.setDaemon(True)
         pro.start()
         pass
 
@@ -124,7 +124,7 @@ class ThreadHandler:
         self.log('Start thread')
         for i in range(self.m_set_work_thread_cnt):
             pro = threading.Thread(target=self._work_thread)
-            pro.setDaemon(False)
+            pro.setDaemon(True)
             pro.start()
         self.do_start()
         pass
