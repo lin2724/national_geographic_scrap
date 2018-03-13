@@ -249,7 +249,7 @@ class GEOYourShotScrap:
         while True:
             time.sleep(10)
             if download_handler.m_quit_flag:
-                sef.log('Main All quit')
+                self.log('Main All quit')
                 break
         pass
 
