@@ -50,10 +50,8 @@ class ThreadHandler:
         self.m_task_list = list()
 
         self.log = LogHandle('ThreadClass.log').log
-        if os.name == 'nt':
-            signal.signal(signal.CTRL_C_EVENT, self.ctrl_c_signal_handler)
-        else:
-            signal.signal(signal.SIGINT, self.ctrl_c_signal_handler)
+
+        signal.signal(signal.SIGINT, self.ctrl_c_signal_handler)
         self.do_init()
         pass
 
